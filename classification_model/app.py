@@ -4,7 +4,6 @@ import openpyxl
 
 st.set_page_config(
     page_title="Member Classification Model",
-    page_icon="📋",
     layout="wide"
 )
 
@@ -295,11 +294,45 @@ if members_file and attendance_file and payment_file:
             fill_value=0
         )
 
+        # create yearly attendance and payment display columns
+        attendance_display = attendance_pivot.copy()
+
+        attendance_display = attendance_display.rename(
+            columns={
+                year: f"Meetings_{year}"
+                for year in required_years
+            }
+        )
+
+        payment_display = payment_pivot.copy()
+
+        payment_display = payment_display.rename(
+            columns={
+                year: f"paid_{year}"
+                for year in payment_pivot.columns
+            }
+        )
+
+        yearly_summary = pd.concat(
+            
+            [
+            attendance_display,
+            payment_display
+            ]
+            , axis=1
+        ).reset_index()
+
         result = members_df.merge(
             attendance_summary,
             on="MemberID",
             how="left"
         )
+
+        result = result.merge(
+            yearly_summary,
+            on="MemberID",
+            how="left"
+            )
 
         result["MeetsAttendanceRule"] = (
             result["MeetsAttendanceRule"]
@@ -333,7 +366,7 @@ if members_file and attendance_file and payment_file:
             # Veteran (>2 years)
             # ----------------------------------------
 
-            if years_registered >= 2:
+            if years_registered > 2:
 
                 attendance_ok = bool(
                     row["MeetsAttendanceRule"]
@@ -430,18 +463,26 @@ if members_file and attendance_file and payment_file:
         # Active for 3 consecutive evaluation years
         # ---------------------------------------------------------
 
-        years_to_check = [
+        sponsorship_years = [
             target_year - 2,
             target_year - 1,
             target_year
         ]
 
-        active_history = {}
 
-        for year in years_to_check:
+        yearly_active_status = {}
 
-            # Attendance for this year
-            yearly_attendance = (
+
+        for year in sponsorship_years:
+
+            year_required = [
+                year - 2,
+                year - 1,
+                year
+            ]
+
+            # Attendance check
+            attendance_check = (
                 attendance_df[
                     attendance_df["Year"] == year
                 ]
@@ -450,8 +491,8 @@ if members_file and attendance_file and payment_file:
             )
 
 
-            # Payment for this year
-            yearly_payment = (
+            # Payment check
+            payment_check = (
                 payment_df[
                     payment_df["PaymentYear"] == year
                 ]
@@ -460,47 +501,42 @@ if members_file and attendance_file and payment_file:
             )
 
 
-            yearly_status = pd.DataFrame({
-                "Attendance": yearly_attendance,
-                "Payment": yearly_payment
+            yearly_result = pd.DataFrame({
+                "Attendance": attendance_check,
+                "Payment": payment_check
             }).fillna(0)
 
 
-            yearly_status["Active"] = (
-                (yearly_status["Attendance"] >= 1)
+            yearly_result["Active"] = (
+                (yearly_result["Attendance"] >= 1)
                 &
-                (yearly_status["Payment"] >= 120)
+                (yearly_result["Payment"] >= 120)
             )
 
 
-            active_history[year] = (
-                yearly_status["Active"]
+            yearly_active_status[year] = (
+                yearly_result["Active"]
             )
 
 
-        sponsorship_history = pd.DataFrame(
-            active_history
+        active_history = pd.DataFrame(
+            yearly_active_status
         ).fillna(False)
 
 
-        sponsorship_history["EligibleForSponsorship"] = (
-            sponsorship_history[
-                years_to_check
+        active_history["EligibleForSponsorship"] = (
+            active_history[
+                sponsorship_years
             ]
             .all(axis=1)
         )
 
 
-        sponsorship_history = (
-            sponsorship_history[
+        classified_df = classified_df.merge(
+            active_history[
                 ["EligibleForSponsorship"]
             ]
-            .reset_index()
-        )
-
-
-        classified_df = classified_df.merge(
-            sponsorship_history,
+            .reset_index(),
             on="MemberID",
             how="left"
         )
@@ -576,6 +612,17 @@ if members_file and attendance_file and payment_file:
             "MemberID",
             "RegDate",
             "YearsRegistered",
+
+            # attendance history
+            "Meetings_" + str(required_years[0]),
+            "Meetings_" + str(required_years[1]),
+            "Meetings_" + str(required_years[2]),
+
+            # payment history
+            "paid_" + str(required_years[0]),
+            "paid_" + str(required_years[1]),
+            "paid_" + str(required_years[2]),
+
             "VeteranActive",
             "IsNewcomerActive",
             "Status",
